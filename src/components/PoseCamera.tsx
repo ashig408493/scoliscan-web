@@ -49,11 +49,39 @@ export default function PoseCamera({
         runningMode: 'VIDEO' as const,
         numPoses: 1,
       });
+      let usingGpu = true;
       try {
         landmarker = await PoseLandmarker.createFromOptions(vision, options('GPU'));
       } catch (err) {
-        console.warn('GPU pose detection unavailable, using CPU', err);
+        console.warn('[ScoliScan] GPU pose detection unavailable, using CPU', err);
         landmarker = await PoseLandmarker.createFromOptions(vision, options('CPU'));
+        usingGpu = false;
+      }
+      console.info('[ScoliScan] Pose detection running on', usingGpu ? 'GPU' : 'CPU');
+
+      // On some computers the GPU version loads fine but never finds anyone.
+      // If it sees nobody for about 4 seconds straight, switch to the CPU
+      // version once. (If the room really is empty, the CPU also sees nobody.)
+      const EMPTY_FRAMES_BEFORE_SWITCH = 120;
+      let emptyFrames = 0;
+      let switching = false;
+      async function switchToCpu() {
+        switching = true;
+        try {
+          const cpu = await PoseLandmarker.createFromOptions(vision, options('CPU'));
+          if (!running) {
+            cpu.close();
+            return;
+          }
+          landmarker?.close();
+          landmarker = cpu;
+          usingGpu = false;
+          console.info('[ScoliScan] GPU found no person for a while, switched to CPU');
+        } catch (err) {
+          console.error('[ScoliScan] Could not switch to CPU', err);
+        } finally {
+          switching = false;
+        }
       }
 
       setStatus('Starting camera…');
@@ -69,12 +97,28 @@ export default function PoseCamera({
 
       setStatus('');
 
+      let lastVideoTime = -1;
       function detect() {
         const video = videoRef.current;
-        if (!running || !landmarker || !video) return;
-        const result = landmarker.detectForVideo(video, performance.now());
+        if (!running || !video) return;
 
-        if (result.landmarks && result.landmarks.length > 0) {
+        // Only run on a new, ready video frame
+        if (landmarker && !switching && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+          lastVideoTime = video.currentTime;
+          try {
+            const result = landmarker.detectForVideo(video, performance.now());
+            handleResult(video, result.landmarks);
+          } catch (err) {
+            // One bad frame shouldn't stop detection for good
+            console.error('[ScoliScan] Pose detection error', err);
+          }
+        }
+        requestAnimationFrame(detect);
+      }
+
+      function handleResult(video: HTMLVideoElement, landmarks: Landmark[][] | undefined) {
+        if (landmarks && landmarks.length > 0) {
+          emptyFrames = 0;
           // ---- Aspect-ratio correction ----
           // MediaPipe gives x as a fraction of the frame's WIDTH and y as a
           // fraction of its HEIGHT. On a non-square frame (e.g. 640×480) those
@@ -87,7 +131,7 @@ export default function PoseCamera({
               ? video.videoWidth / video.videoHeight
               : 1;
 
-          const corrected: Landmark[] = (result.landmarks[0] as Landmark[]).map((p) => ({
+          const corrected: Landmark[] = landmarks[0].map((p) => ({
             ...p,
             x: p.x * aspect,
             z: p.z * aspect,
@@ -95,9 +139,13 @@ export default function PoseCamera({
 
           onLandmarksRef.current(corrected);
         } else {
+          emptyFrames++;
+          if (usingGpu && !switching && emptyFrames >= EMPTY_FRAMES_BEFORE_SWITCH) {
+            emptyFrames = 0;
+            void switchToCpu();
+          }
           onNoPersonRef.current?.();
         }
-        requestAnimationFrame(detect);
       }
       detect();
     }
