@@ -57,6 +57,14 @@ function fmt(n: unknown, digits = 3, unit = ''): string {
   return typeof n === 'number' && Number.isFinite(n) ? n.toFixed(digits) + unit : '—';
 }
 
+// Distances are stored as fractions of shoulder width (0.05 = 5%), which keeps
+// them comparable for any body size or camera distance. Show them as a percent.
+function pct(n: unknown): string {
+  return typeof n === 'number' && Number.isFinite(n)
+    ? `${Math.round(n * 100)}% of shoulder width`
+    : '—';
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div
@@ -206,18 +214,26 @@ export default function ResultsView() {
           {front && (
             <Section title="Front View">
               <Row label="Shoulder tilt" value={fmt(front.shoulder, 1, '°')} />
-              <Row label="Hip lean" value={fmt(front.hipLean)} />
-              <Row label="Head lean" value={fmt(front.headLean)} />
+              <Row label="Hip lean" value={pct(front.hipLean)} />
+              <Row label="Head lean" value={pct(front.headLean)} />
+              <p style={note}>
+                Distances are shown as a percentage of your shoulder width, so they
+                compare fairly for any body size or distance from the camera.
+              </p>
             </Section>
           )}
 
           {back && (
             <Section title="Back View">
-              <Row label="Plumb offset" value={fmt(back.plumb)} />
+              <Row label="Plumb offset" value={pct(back.plumb)} />
               <Row label="Shoulder tilt" value={fmt(back.shoulder, 1, '°')} />
               <Row label="Hip tilt" value={fmt(back.hip, 1, '°')} />
-              <Row label="Left arm gap" value={fmt(back.leftArm)} />
-              <Row label="Right arm gap" value={fmt(back.rightArm)} />
+              <Row label="Left arm gap" value={pct(back.leftArm)} />
+              <Row label="Right arm gap" value={pct(back.rightArm)} />
+              <p style={note}>
+                Distances are shown as a percentage of your shoulder width, so they
+                compare fairly for any body size or distance from the camera.
+              </p>
             </Section>
           )}
 
