@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
+// The WASM files MUST be the same version as the @mediapipe/tasks-vision
+// package in package.json. Loading "@latest" broke detection when MediaPipe
+// released a newer version, so the version is pinned here. If you ever update
+// the package, update this number to match.
+const MEDIAPIPE_VERSION = '1.0.1';
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
+const MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+
 export type Landmark = { x: number; y: number; z: number; visibility?: number };
 
 type Props = {
@@ -31,18 +40,21 @@ export default function PoseCamera({
     let running = true;
 
     async function setup() {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-      );
-      landmarker = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
+      const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+
+      // Try the GPU first (faster). Some browsers and devices can't run it,
+      // so fall back to the CPU instead of failing.
+      const options = (delegate: 'GPU' | 'CPU') => ({
+        baseOptions: { modelAssetPath: MODEL_URL, delegate },
+        runningMode: 'VIDEO' as const,
         numPoses: 1,
       });
+      try {
+        landmarker = await PoseLandmarker.createFromOptions(vision, options('GPU'));
+      } catch (err) {
+        console.warn('GPU pose detection unavailable, using CPU', err);
+        landmarker = await PoseLandmarker.createFromOptions(vision, options('CPU'));
+      }
 
       setStatus('Starting camera…');
 
