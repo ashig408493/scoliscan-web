@@ -59,6 +59,7 @@ const RIGHT_ELBOW = 14;
 const LEFT_HIP = 23;
 const RIGHT_HIP = 24;
 const LEFT_KNEE = 25;
+const RIGHT_KNEE = 26;
 const LEFT_ANKLE = 27;
 const RIGHT_ANKLE = 28;
 
@@ -180,22 +181,35 @@ export function hipAngle(landmarks: Landmark[]): number {
 // ---- SIDE VIEW METRICS (Adam's forward bend posture check) ----
 // Unlike the asymmetry metrics, these ARE safe to gate on: how far you bend
 // and whether your knees are straight are things the user controls.
-// NOTE: assumes the person's LEFT side faces the camera.
+// Works with EITHER side facing the camera: the side the camera can see best
+// is used, since the far side is hidden behind the body.
+
+type Side = { shoulder: number; hip: number; knee: number; ankle: number };
+const LEFT_SIDE: Side = { shoulder: LEFT_SHOULDER, hip: LEFT_HIP, knee: LEFT_KNEE, ankle: LEFT_ANKLE };
+const RIGHT_SIDE: Side = { shoulder: RIGHT_SHOULDER, hip: RIGHT_HIP, knee: RIGHT_KNEE, ankle: RIGHT_ANKLE };
+
+function sideScore(landmarks: Landmark[], side: Side): number {
+  return [side.shoulder, side.hip, side.knee, side.ankle].reduce(
+    (sum, i) => sum + (landmarks[i].visibility ?? 0),
+    0,
+  );
+}
+
+// The side of the body facing the camera
+function cameraSide(landmarks: Landmark[]): Side {
+  return sideScore(landmarks, LEFT_SIDE) >= sideScore(landmarks, RIGHT_SIDE) ? LEFT_SIDE : RIGHT_SIDE;
+}
 
 // How folded the torso is at the hip. ~180 = standing, ~90 = properly bent.
 export function hipBend(landmarks: Landmark[]): number {
-  const shoulder = getPoint(landmarks, LEFT_SHOULDER);
-  const hip = getPoint(landmarks, LEFT_HIP);
-  const knee = getPoint(landmarks, LEFT_KNEE);
-  return angleAtPoint(shoulder, hip, knee);
+  const s = cameraSide(landmarks);
+  return angleAtPoint(getPoint(landmarks, s.shoulder), getPoint(landmarks, s.hip), getPoint(landmarks, s.knee));
 }
 
 // How straight the leg is. ~180 = straight, lower = bent knee.
 export function kneeAngle(landmarks: Landmark[]): number {
-  const hip = getPoint(landmarks, LEFT_HIP);
-  const knee = getPoint(landmarks, LEFT_KNEE);
-  const ankle = getPoint(landmarks, LEFT_ANKLE);
-  return angleAtPoint(hip, knee, ankle);
+  const s = cameraSide(landmarks);
+  return angleAtPoint(getPoint(landmarks, s.hip), getPoint(landmarks, s.knee), getPoint(landmarks, s.ankle));
 }
 
 // ---- LANDMARK VISIBILITY ----
@@ -209,25 +223,24 @@ export function kneeAngle(landmarks: Landmark[]): number {
 // scoliosis the way an asymmetry check would.
 
 const VISIBILITY_THRESHOLD = 0.6;
+// Feet are judged more leniently. Ankles near the bottom of the frame or on a
+// dark floor often score lower even when they're in view, and the measurements
+// only use their left-right position, which stays reliable at lower scores.
+const FEET_THRESHOLD = 0.35;
 
-// The landmarks every measurement depends on
-const REQUIRED = [
-  LEFT_EAR,
-  RIGHT_EAR,
-  LEFT_SHOULDER,
-  RIGHT_SHOULDER,
-  LEFT_HIP,
-  RIGHT_HIP,
-  LEFT_ANKLE,
-  RIGHT_ANKLE,
-];
+// The landmarks every measurement depends on (feet are checked separately)
+const REQUIRED = [LEFT_EAR, RIGHT_EAR, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP];
 
-function isVisible(landmarks: Landmark[], index: number): boolean {
-  return (landmarks[index].visibility ?? 0) > VISIBILITY_THRESHOLD;
+function isVisible(landmarks: Landmark[], index: number, threshold = VISIBILITY_THRESHOLD): boolean {
+  return (landmarks[index].visibility ?? 0) > threshold;
+}
+
+function feetVisible(landmarks: Landmark[]): boolean {
+  return isVisible(landmarks, LEFT_ANKLE, FEET_THRESHOLD) && isVisible(landmarks, RIGHT_ANKLE, FEET_THRESHOLD);
 }
 
 export function areLandmarksVisible(landmarks: Landmark[]): boolean {
-  return REQUIRED.every((i) => isVisible(landmarks, i));
+  return REQUIRED.every((i) => isVisible(landmarks, i)) && feetVisible(landmarks);
 }
 
 // What's missing, so the UI can say something specific rather than
@@ -246,13 +259,25 @@ export function checkFraming(landmarks: Landmark[]): FramingIssue {
     isVisible(landmarks, RIGHT_SHOULDER) &&
     isVisible(landmarks, LEFT_HIP) &&
     isVisible(landmarks, RIGHT_HIP);
-  const feetOk =
-    isVisible(landmarks, LEFT_ANKLE) && isVisible(landmarks, RIGHT_ANKLE);
+  const feetOk = feetVisible(landmarks);
 
   // Both ends missing usually means they're standing too close to the camera
   if (!headOk && !feetOk) return 'too-close';
   if (!feetOk) return 'feet-missing';
   if (!headOk) return 'head-missing';
+  if (!torsoOk) return 'torso-missing';
+  return 'ok';
+}
+
+// Framing for the side (forward bend) view. Only the side facing the camera
+// has to be visible: the far side is hidden behind the body, and the head
+// hangs down during the bend, so ears and the far ankle aren't required.
+export function checkSideFraming(landmarks: Landmark[]): FramingIssue {
+  const s = cameraSide(landmarks);
+  const torsoOk = isVisible(landmarks, s.shoulder) && isVisible(landmarks, s.hip);
+  const legOk = isVisible(landmarks, s.knee) && isVisible(landmarks, s.ankle, FEET_THRESHOLD);
+  if (!torsoOk && !legOk) return 'too-close';
+  if (!legOk) return 'feet-missing';
   if (!torsoOk) return 'torso-missing';
   return 'ok';
 }

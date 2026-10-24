@@ -8,7 +8,7 @@ import { speak, stopSpeaking, isSpeechSupported } from '../speech';
 import {
   hipBend,
   kneeAngle,
-  checkFraming,
+  checkSideFraming,
   framingMessage,
   type FramingIssue,
 } from '../metrics';
@@ -41,7 +41,7 @@ export default function SideView() {
   useEffect(() => stopSpeaking, []);
 
   function handleLandmarks(lm: Landmark[]) {
-    const issue = checkFraming(lm);
+    const issue = checkSideFraming(lm);
     setFraming(issue);
 
     const b = hipBend(lm);
@@ -134,8 +134,8 @@ export default function SideView() {
         )}
       </div>
       <p style={subtitle}>
-        Stand with your <b>left side</b> to the camera, then bend forward at the
-        waist with your knees straight and arms hanging down.
+        Stand <b>sideways</b> to the camera (either side works), then bend forward
+        at the waist with your knees straight and arms hanging down.
       </p>
 
       <PoseCamera onLandmarks={handleLandmarks} onNoPerson={handleNoPerson} />
